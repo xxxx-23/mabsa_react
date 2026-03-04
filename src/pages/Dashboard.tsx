@@ -1,11 +1,15 @@
 import React, { useEffect, useRef } from "react";
 import * as echarts from "echarts";
 import { Card, Row, Col, Typography } from "antd";
-import { mockDataList } from "../utils/mockData";
+// import { mockDataList } from "../utils/mockData";
+import { useDataState } from "../store/useDataStore";
+import type { MultimodalData } from "../types";
 
 const { Title } = Typography;
 
 const Dashboard: React.FC = () => {
+  // ✅ 【核心修改】：从仓库中拿到最鲜活的、从 localStorage 恢复的数据列表
+  const { dataList } = useDataState();
   // 考点 1. useRef 获取真实 DOM
   // React 是虚拟 DOM，但 ECharts 需要操作真实的 HTML div
   // useRef 就像一根“钩子”，用来在页面渲染完成后，钩住那个我们要画的 div
@@ -32,7 +36,7 @@ const Dashboard: React.FC = () => {
     let pos = 0,
       neg = 0,
       neu = 0;
-    mockDataList.forEach((data) => {
+    dataList.forEach((data: MultimodalData) => {
       data.aspects.forEach((aspect) => {
         if (aspect.polarity === "positive") pos++;
         else if (aspect.polarity === "negative") neg++;
@@ -44,7 +48,7 @@ const Dashboard: React.FC = () => {
     const xData = ["1", "2", "3", "4", "5", "6++"];
 
     const yData = [0, 0, 0, 0, 0, 0];
-    mockDataList.forEach((data) => {
+    dataList.forEach((data: MultimodalData) => {
       // 获取当前这个实例里有几个方面词
       const aspect_count = data.aspects.length;
       if (aspect_count) {

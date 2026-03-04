@@ -1,4 +1,6 @@
 import {
+  Modal,
+  Input,
   Row,
   Typography,
   Col,
@@ -76,6 +78,16 @@ const Workspace: React.FC = () => {
     currentY: 0,
   });
 
+  // 增加控制弹窗的状态用来记录“弹窗是否显示”、“用户刚才画的框的数据”以及“输入框里的字”：
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [tempBoxData, setTempBoxData] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [labelInput, setLabelInput] = useState("");
+
   // 核心函数： 获取鼠标相对于图片容器的精确坐标
   const getRelativeCoords = (e: React.MouseEvent) => {
     if (!imageContainerRef.current)
@@ -128,33 +140,14 @@ const Workspace: React.FC = () => {
 
     // 防御编程：过滤掉误触（比如只是随便点了一下，没拖拽）
     if (width > 10 && height > 10) {
-      // 弹个窗口 询问用户这个东西叫什么名字？
-      const labelName = window.prompt(
-        "请输入新框选目标的名称（如：car, tree）",
-        "new_target",
-      );
-      if (labelName) {
-        const newBox = {
-          id: `box_${labelName}`,
-          label: labelName,
-          confidence: 1.0,
-          x: finalX,
-          y: finalY,
-          width,
-          height,
-        };
-        addYoloBox(currentData.tweetId, newBox);
-      }
-    }
+      // 1. 暂存刚才画的几何数据
+      setTempBoxData({ x: finalX, y: finalY, width, height });
 
-    // 检测设置，执行自动下一条
-    if (settings.autoNext) {
-      if (currentIndex < dataList.length - 1) {
-        message.success("画框成功！已自动为您切换下一条...");
-        fetchData(currentIndex + 1);
-      } else {
-        message.info("这已经是最后一条数据啦！");
-      }
+      // 2. 清空上一次输入的字，准备迎接新标签
+      setLabelInput("target");
+
+      // 3. 呼出 Ant Design 弹窗
+      setIsModalVisible(true);
     }
 
     // 重置画图状态
@@ -165,6 +158,41 @@ const Workspace: React.FC = () => {
       currentX: 0,
       currentY: 0,
     });
+  };
+
+  // 确认保存新的 YOLO 框
+  const handleModalOk = () => {
+    if (tempBoxData && labelInput.trim() && currentData) {
+      const newBox = {
+        id: `box_${Date.now()}`,
+        label: labelInput.trim(),
+        confidence: 1.0,
+        ...tempBoxData,
+      };
+
+      addYoloBox(currentData.tweetId, newBox);
+
+      // 把【自动下一条】的逻辑搬到这里！只有当用户点确定保存后，才跳转
+      // 检测设置，执行自动下一条
+      if (settings.autoNext) {
+        if (currentIndex < dataList.length - 1) {
+          message.success("画框成功！已自动为您切换下一条...");
+          fetchData(currentIndex + 1);
+        } else {
+          message.info("这已经是最后一条数据啦！");
+        }
+      }
+    }
+
+    // 关掉弹窗，清空缓存
+    setIsModalVisible(false);
+    setTempBoxData(null);
+  };
+
+  // 取消保存新的 YOLO 框
+  const handleModalCancel = () => {
+    setIsModalVisible(false);
+    setTempBoxData(null);
   };
 
   // 利用 useEffect 建立全局点击监听
@@ -658,6 +686,28 @@ const Workspace: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      {/* 优雅的输入弹窗 */}
+      <Modal
+        title="✨ 添加视觉特征标签"
+        open={isModalVisible}
+        onOk={handleModalOk}
+        onCancel={handleModalCancel}
+        okText="保存框选"
+        cancelText="取消"
+        destroyOnHidden
+      >
+        <div style={{ marginBottom: "10px" }}>
+          请输入该目标的类别名称（例如: car, person, background）：
+        </div>
+        <Input
+          autoFocus // 弹窗一开，鼠标光标自动锁定在这里，方便直接打字
+          placeholder="请输入类别..."
+          value={labelInput}
+          onChange={(e) => setLabelInput(e.target.value)}
+          onPressEnter={handleModalOk}
+        />
+      </Modal>
     </div>
   );
 };

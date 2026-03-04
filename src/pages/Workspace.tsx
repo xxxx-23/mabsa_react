@@ -430,6 +430,57 @@ const Workspace: React.FC = () => {
     );
   }
 
+  // 增加导出函数（导出纯正的 YOLO 训练格式 .txt）
+  const handleExportYOLO = () => {
+    if (!currentData || !imageContainerRef.current) return;
+
+    // 1. 获取图片容器的实际宽高，用于计算归一化(0~1 之间的小数)
+    const rect = imageContainerRef.current.getBoundingClientRect();
+    const containerW = rect.width;
+    const containerH = rect.height;
+
+    // 2. 简单模拟一个 Class 映射表 (实际业务中，这应该是用户在系统设置里配好的)
+    // 比如：["person", "car", "dog"] -> person=0, car=1, dog=2
+    const uniqueLabels = Array.from(
+      new Set(currentData.yoloBboxes.map((b) => b.label)),
+    );
+
+    let txtContent = "";
+
+    // 核心计算：YOLO 的相对坐标转换
+    currentData.yoloBboxes.forEach((box) => {
+      const classId = uniqueLabels.indexOf(box.label);
+
+      // 中心点坐标 = (左上角起点 + 宽高的一半) / 容器总宽高
+      const xCenter = (box.x + box.width / 2) / containerW;
+      const yCenter = (box.y + box.height / 2) / containerH;
+      // 相对宽高 = 绝对宽高 / 容器总宽高
+      const wNorm = box.width / containerW;
+      const hNorm = box.height / containerH;
+
+      // 拼凑成 YOLO 要求的空格分隔格式 (保留 6 位小数)
+      txtContent += `${classId} ${xCenter.toFixed(6)} ${yCenter.toFixed(6)} ${wNorm.toFixed(6)} ${hNorm.toFixed(6)}\n`;
+    });
+
+    if (!txtContent) {
+      message.warning("当前图片没有任何视觉框，无需导出！");
+      return;
+    }
+
+    // 4. 触发浏览器下载
+    const blob = new Blob([txtContent], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `yolo_labels_${currentData.tweetId}.txt`; // 生成对应的 txt 文件
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    message.success("YOLO 格式导出成功！可直接送入模型训练。");
+  };
+
   return (
     <div style={{ padding: "20px" }}>
       {/* 头部标题区：加上了上一条/下一条按钮 */}
@@ -475,6 +526,12 @@ const Workspace: React.FC = () => {
           </Button>
           <Button icon={<DownloadOutlined />} onClick={handleExportJSON}>
             导出当前的 JSON 文件
+          </Button>
+          <Button
+            onClick={handleExportYOLO}
+            style={{ borderColor: "#f5222d", color: "#f5222d" }}
+          >
+            导出 YOLO 格式 (.txt)
           </Button>
         </Space>
       </div>

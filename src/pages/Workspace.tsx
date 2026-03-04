@@ -115,7 +115,7 @@ const Workspace: React.FC = () => {
   };
 
   // 鼠标松开：画完了！计算最终数据并存入仓库
-  const handleDrawMouseUp = (e: React.MouseEvent) => {
+  const handleDrawMouseUp = () => {
     if (!drawingState.isDrawing || !currentData) return;
 
     const { startX, startY, currentX, currentY } = drawingState;

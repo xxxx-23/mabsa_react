@@ -1,6 +1,5 @@
 // 首先引入我们在 types/index.ts 中定义好的类型
 import { type MultimodalData } from '../types'
-import localImage from '../assets/1739565.jpg'
 
 
 // 声明一个变量 mockData ， 并告诉 TypeScript 它的类型是 MultimodalData

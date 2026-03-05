@@ -39,6 +39,7 @@ const Workspace: React.FC = () => {
     dataList,
     addAspect,
     addYoloBox,
+    deleteAspect,
     settings,
   } = useDataState();
 
@@ -89,7 +90,7 @@ const Workspace: React.FC = () => {
   const [labelInput, setLabelInput] = useState("");
 
   // 增加一个控制 AI 请求的局部状态
-  const [isPrdicting, setIsPredicting] = useState(false);
+  const [isPredicting, setIsPredicting] = useState(false);
 
   // 核心函数： 获取鼠标相对于图片容器的精确坐标
   const getRelativeCoords = (e: React.MouseEvent) => {
@@ -590,8 +591,8 @@ const Workspace: React.FC = () => {
               fontWeight: "bold",
             }}
             onClick={handleAIpredict}
-            loading={isPrdicting} // 显示转圈圈动画
-            disabled={isPrdicting} // 在一个实例的预测期间禁止再次进行点击
+            loading={isPredicting} // 显示转圈圈动画
+            disabled={isPredicting} // 在一个实例的预测期间禁止再次进行点击
           >
             ✨ 呼叫 AI 智能预标注
           </Button>
@@ -632,6 +633,12 @@ const Workspace: React.FC = () => {
                     }}
                   >
                     <Tag
+                      // 拦截鼠标右键，执行删除操作
+                      onContextMenu={(e) => {
+                        e.preventDefault(); // 阻止浏览器默认的右键菜单弹出
+                        deleteAspect(currentData.tweetId, aspect.id);
+                        message.success("🗑️ 已永久移除该方面词");
+                      }}
                       style={{
                         fontSize: "16px",
                         padding: "5px 10px",
@@ -760,11 +767,17 @@ const Workspace: React.FC = () => {
                   <Popconfirm
                     title="删除提示"
                     description="确定要删除这个机器视觉标注框吗？"
-                    onConfirm={() => deleteYoloBox(currentData.tweetId, box.id)}
+                    onConfirm={(e) => {
+                      (e?.stopPropagation(),
+                        deleteYoloBox(currentData.tweetId, box.id));
+                    }}
+                    onCancel={(e) => e?.stopPropagation()} // 取消时也阻止冒泡
                     okText="确定"
                     cancelText="取消"
                   >
                     <CloseCircleFilled
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
                       style={{
                         position: "absolute",
                         top: "-10px",

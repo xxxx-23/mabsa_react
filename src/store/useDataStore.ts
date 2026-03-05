@@ -40,6 +40,9 @@ interface DataStore {
 
     // 添加新 YOLO 框的方法
     addYoloBox: (tweetId: string, newBox: BoundingBox) => void
+
+    // 删除方面词的方法
+    deleteAspect: (tweetId: string, aspectId: string) => void
 }
 
 // 从本地硬盘（localStorage）“捞”数据
@@ -145,34 +148,37 @@ export const useDataState = create<DataStore>((set, get)=>({
 
     },
 
-    // 实现删除 YOLO 边框的逻辑
     deleteYoloBox: (tweetId, boxId) => {
-        set((state) => {
-            // 安全检查 如果当前没数据，或者 ID 对不上，直接不做处理
-            if(!state.currentData || state.currentData.tweetId !== tweetId){
-                return state
-            }
+            set((state) => {
+                // 安全检查：如果当前没数据，或者操作的不是当前这条数据，直接返回
+                if (!state.currentData || state.currentData.tweetId !== tweetId) return state;
 
-            // console.log('准备删除的 boxId是:',boxId)
+                // 1. 过滤掉要删除的那个框
+                const updatedBboxes = state.currentData.yoloBboxes.filter(b => b.id !== boxId);
+                
+                // 2. 组装最新的 currentData
+                const updatedCurrentData = { ...state.currentData, yoloBboxes: updatedBboxes };
 
-            // 用 filter 过滤掉我们要删掉的 boxId
-            // 只要框的 Id 不等于我们要删除的 boxId，就进行保留
-            const updateBboxes = state.currentData.yoloBboxes.filter((box) => 
-                box.id !== boxId
-            )
+                // 3. 同时更新当前屏幕显示 (currentData) 和 历史总库 (dataList) ！！！
+                return {
+                    currentData: updatedCurrentData,
+                    dataList: state.dataList.map(data => data.tweetId === tweetId ? updatedCurrentData : data)
+                };
+            });
+    },
+    
+    deleteAspect: (tweetId, aspectId) => {
+            set((state) => {
+                if (!state.currentData || state.currentData.tweetId !== tweetId) return state;
 
-            // console.log("过滤后的数组是:", updateBboxes)
+                const updatedAspects = state.currentData.aspects.filter(a => a.id !== aspectId);
+                const updatedCurrentData = { ...state.currentData, aspects: updatedAspects };
 
-            // 返回新的状态替换旧的状态
-            return {
-                currentData: {
-                    ...state.currentData,
-                    yoloBboxes: updateBboxes
-                }
-            }
-
-
-        })
+                return {
+                    currentData: updatedCurrentData,
+                    dataList: state.dataList.map(data => data.tweetId === tweetId ? updatedCurrentData : data)
+                };
+            });
     },
 
     // 实现导入外部数据的功能--添加新数据

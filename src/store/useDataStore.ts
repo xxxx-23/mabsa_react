@@ -43,6 +43,9 @@ interface DataStore {
 
     // 删除方面词的方法
     deleteAspect: (tweetId: string, aspectId: string) => void
+
+    // 删除当前正在展示的整条数据
+    deleteCurrentData: () => void
 }
 
 // 从本地硬盘（localStorage）“捞”数据
@@ -250,6 +253,42 @@ export const useDataState = create<DataStore>((set, get)=>({
         set((state) => ({
             settings: {...state.settings, ...newSettings}
         }))
+    },
+
+    // 删除当前展示数据的逻辑
+    deleteCurrentData: () => {
+        set((state)=>{
+            // 1. 防御：如果列表本来就是空的
+            if(state.dataList.length === 0) return state
+
+            // 2. 复制一份新的列表，准备进行删除操作
+            const newList = [...state.dataList]
+
+            // 3. 从数组中精确切除当前这条数据
+            newList.splice(state.currentIndex, 1)
+
+            // 4. 情况 A：如果切完之后，列表彻底空了
+            if(newList.length === 0){
+                return{
+                    dataList: [],
+                    currentData: null,
+                    currentIndex: 0
+                }
+            }
+
+            // 5. 情况 B：列表还有数据，计算下一个该上屏的是谁
+            // 如果你删掉的是最后一条，现在的 currentIndex 就会导致数组越界（比如删了下标 5，新数组最大只有 4）
+            // 所以我们要取 Math.min(原下标, 新数组的最大下标)
+            const newIndex = Math.min(state.currentIndex, newList.length - 1)
+            const newCurrentData = newList[newIndex]
+
+            // 6. 更新仓库
+            return {
+                dataList: newList,
+                currentData: newCurrentData,
+                currentIndex: newIndex
+            };
+        })
     }
 
 }))

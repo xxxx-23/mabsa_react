@@ -25,6 +25,7 @@ import {
   UploadOutlined,
   PlusOutlined,
   MinusCircleOutlined,
+  DeleteOutlined,
 } from "@ant-design/icons";
 
 const { Title, Paragraph } = Typography;
@@ -43,6 +44,7 @@ const Workspace: React.FC = () => {
     addAspect,
     addYoloBox,
     deleteAspect,
+    deleteCurrentData,
     settings,
   } = useDataState();
 
@@ -695,6 +697,25 @@ const Workspace: React.FC = () => {
           >
             + 新增单条数据
           </Button>
+          <Popconfirm
+            title="⚠️ 警告：永久删除数据"
+            description="确定要从系统中彻底删除当前这条推文的所有数据吗？此操作无法撤销！"
+            onConfirm={() => {
+              deleteCurrentData();
+              message.success("🗑️ 数据已彻底销毁！");
+            }}
+            okText="确定删除"
+            cancelText="取消"
+            okButtonProps={{ danger: true }} // 让确认按钮变成醒目的红色
+          >
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              disabled={dataList.length === 0} // 如果没数据了，按钮置灰
+            >
+              删除当前数据
+            </Button>
+          </Popconfirm>
           <Button
             disabled={currentIndex === 0}
             onClick={() => {

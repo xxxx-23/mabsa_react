@@ -88,6 +88,9 @@ const Workspace: React.FC = () => {
   } | null>(null);
   const [labelInput, setLabelInput] = useState("");
 
+  // 增加一个控制 AI 请求的局部状态
+  const [isPrdicting, setIsPredicting] = useState(false);
+
   // 核心函数： 获取鼠标相对于图片容器的精确坐标
   const getRelativeCoords = (e: React.MouseEvent) => {
     if (!imageContainerRef.current)
@@ -485,6 +488,8 @@ const Workspace: React.FC = () => {
   const handleAIpredict = async () => {
     if (!currentData) return;
 
+    setIsPredicting(true); // 锁死按钮
+
     // 弹个轻提示，提示用户等待
     const hideLoading = message.loading("🤖 AI 大模型正在拼命识别特征中...", 0);
 
@@ -585,6 +590,8 @@ const Workspace: React.FC = () => {
               fontWeight: "bold",
             }}
             onClick={handleAIpredict}
+            loading={isPrdicting} // 显示转圈圈动画
+            disabled={isPrdicting} // 在一个实例的预测期间禁止再次进行点击
           >
             ✨ 呼叫 AI 智能预标注
           </Button>

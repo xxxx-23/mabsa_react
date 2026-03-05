@@ -102,7 +102,7 @@ const Workspace: React.FC = () => {
   const [newRawText, setNewRawText] = useState("");
   // const [newAspectsInput, setNewAspectsInput] = useState("");
   const [manualAspects, setManualAspects] = useState<
-    Array<{ term: string; polarity: AspectTerm["polarity"] }>
+    Array<{ id: string; term: string; polarity: AspectTerm["polarity"] }>
   >([]);
   const [newImageFile, setNewImageFile] = useState<File | null>(null);
   const [newYoloFile, setNewYoloFile] = useState<File | null>(null);
@@ -938,8 +938,8 @@ const Workspace: React.FC = () => {
                     title="删除提示"
                     description="确定要删除这个机器视觉标注框吗？"
                     onConfirm={(e) => {
-                      (e?.stopPropagation(),
-                        deleteYoloBox(currentData.tweetId, box.id));
+                      e?.stopPropagation();
+                      deleteYoloBox(currentData.tweetId, box.id);
                     }}
                     onCancel={(e) => e?.stopPropagation()} // 取消时也阻止冒泡
                     okText="确定"
@@ -1051,7 +1051,11 @@ const Workspace: React.FC = () => {
                 onClick={() =>
                   setManualAspects([
                     ...manualAspects,
-                    { term: "", polarity: "neutral" },
+                    {
+                      id: Date.now().toString(),
+                      term: "",
+                      polarity: "neutral",
+                    },
                   ])
                 }
               >
@@ -1061,7 +1065,7 @@ const Workspace: React.FC = () => {
             {/* 遍历数组，渲染每一行的输入框和下拉框 */}
             {manualAspects.map((aspect, index) => (
               <Space
-                key={index}
+                key={aspect.id}
                 style={{ display: "flex", marginBottom: 8 }}
                 align="baseline"
               >

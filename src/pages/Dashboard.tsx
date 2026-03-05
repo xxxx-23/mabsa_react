@@ -8,7 +8,7 @@ import type { MultimodalData } from "../types";
 const { Title } = Typography;
 
 const Dashboard: React.FC = () => {
-  // ✅ 【核心修改】：从仓库中拿到最鲜活的、从 localStorage 恢复的数据列表
+  // ✅ 【核心修改】：从仓库中拿到从 localStorage 恢复的数据列表
   const { dataList } = useDataState();
   // 考点 1. useRef 获取真实 DOM
   // React 是虚拟 DOM，但 ECharts 需要操作真实的 HTML div

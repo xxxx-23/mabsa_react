@@ -481,6 +481,50 @@ const Workspace: React.FC = () => {
     message.success("YOLO 格式导出成功！可直接送入模型训练。");
   };
 
+  // 打通 Python 后端的 AI 通信管道
+  const handleAIpredict = async () => {
+    if (!currentData) return;
+
+    // 弹个轻提示，提示用户等待
+    const hideLoading = message.loading("🤖 AI 大模型正在拼命识别特征中...", 0);
+
+    try {
+      // 1. 利用浏览器原生的 fetch API 发送 POST 请求
+      const response = await fetch("http://localhost:8000/api/predict", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+
+        // 把当前的数据喂给后端
+        body: JSON.stringify({
+          tweetId: currentData.tweetId,
+          rawText: currentData.rawText,
+          imageUrl: currentData.imageUrl,
+        }),
+      });
+      const result = await response.json();
+
+      if (result.status === "success") {
+        // 2. 拿到 AI 返回的数据后，直接塞进我们的 Zustand 仓库
+        result.data.yoloBboxes.forEach((box: any) =>
+          addYoloBox(currentData.tweetId, box),
+        );
+        result.data.aspects.forEach((aspect: any) =>
+          addAspect(currentData.tweetId, aspect),
+        );
+
+        hideLoading();
+        message.success("✨ AI 预标注成功上屏！请进行人工核验。");
+      }
+    } catch (error) {
+      hideLoading();
+      message.error(
+        "🚨 无法连接到 AI 后端服务器，请检查 Python 服务是否启动！",
+      );
+    }
+  };
+
   return (
     <div style={{ padding: "20px" }}>
       {/* 头部标题区：加上了上一条/下一条按钮 */}
@@ -532,6 +576,17 @@ const Workspace: React.FC = () => {
             style={{ borderColor: "#f5222d", color: "#f5222d" }}
           >
             导出 YOLO 格式 (.txt)
+          </Button>
+          <Button
+            type="dashed"
+            style={{
+              borderColor: "#722ed1",
+              color: "#722ed1",
+              fontWeight: "bold",
+            }}
+            onClick={handleAIpredict}
+          >
+            ✨ 呼叫 AI 智能预标注
           </Button>
         </Space>
       </div>

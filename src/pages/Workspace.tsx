@@ -1,4 +1,5 @@
 import {
+  Select,
   Modal,
   Input,
   Row,
@@ -22,6 +23,8 @@ import {
   CloseCircleFilled,
   DownloadOutlined,
   UploadOutlined,
+  PlusOutlined,
+  MinusCircleOutlined,
 } from "@ant-design/icons";
 
 const { Title, Paragraph } = Typography;
@@ -91,6 +94,145 @@ const Workspace: React.FC = () => {
 
   // 增加一个控制 AI 请求的局部状态
   const [isPredicting, setIsPredicting] = useState(false);
+
+  // 新增弹窗控制和表单状态
+  const [isAddDataModalVisible, setIsAddDataModalVisible] = useState(false);
+  const [newRawText, setNewRawText] = useState("");
+  // const [newAspectsInput, setNewAspectsInput] = useState("");
+  const [manualAspects, setManualAspects] = useState<
+    Array<{ term: string; polarity: AspectTerm["polarity"] }>
+  >([]);
+  const [newImageFile, setNewImageFile] = useState<File | null>(null);
+  const [newYoloFile, setNewYoloFile] = useState<File | null>(null);
+
+  // 工具 1：把图片 File 转换成 Base64 字符串
+  const getBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = (error) => reject(error);
+    });
+  };
+
+  // 工具 2：获取 Base64 图片的真实物理宽高（YOLO 逆运算极其需要！）
+  const getImageDimensions = (
+    base64Str: string,
+  ): Promise<{ width: number; height: number }> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64Str;
+      img.onload = () => {
+        resolve({ width: img.naturalWidth, height: img.naturalHeight });
+      };
+    });
+  };
+
+  // 工具 3：把 File 转换成纯文本
+  const getTextFromFile = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsText(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = (error) => reject(error);
+    });
+  };
+
+  const handleAddNewDataSubmit = async () => {
+    if (!newRawText.trim() || !newImageFile) {
+      message.error("🚨 推文文本和图片是必填项！");
+      return;
+    }
+
+    const hideLoading = message.loading("正在处理数据入库...", 0);
+
+    try {
+      // 1. 读取图片为 Base64
+      const imgBase64 = await getBase64(newImageFile);
+
+      // 解析手动输入的方面词
+      let parsedAspects: any[] = [];
+
+      // 2. 获取图片真实分辨率
+      const { width: imgW, height: imgH } = await getImageDimensions(imgBase64);
+
+      // 3. 解析 YOLO 文件（如果存在的话）
+      let parsedBboxes: any[] = [];
+      if (newYoloFile) {
+        const yoloText = await getTextFromFile(newYoloFile);
+        const lines = yoloText.split("\n").filter((line) => line.trim() !== "");
+
+        parsedBboxes = lines.map((line, index) => {
+          // YOLO 格式： class_id x_center y_center w_norm h_norm
+          const [classId, xCenter, yCenter, wNorm, hNorm] = line
+            .trim()
+            .split(/\s+/)
+            .map(Number);
+          // 逆向运算：把 0~1 的比例还原成真实像素
+          const boxWidth = wNorm * imgW;
+          const boxHeight = hNorm * imgH;
+          const boxX = xCenter * imgW - boxWidth / 2;
+          const boxY = yCenter * imgH - boxHeight / 2;
+
+          return {
+            id: `imported_box_${Date.now()}_${index}`,
+            label: `class_${classId}`, // YOLO 里只有数字，先用 class_X 占位，用户后续可改
+            confidence: 1.0,
+            x: boxX,
+            y: boxY,
+            width: boxWidth,
+            height: boxHeight,
+          };
+        });
+      }
+
+      // 过滤掉那些添加了输入框但没写字的空项
+      const validManualAspects = manualAspects.filter(
+        (a) => a.term.trim() !== "",
+      );
+
+      validManualAspects.forEach((item, idx) => {
+        const term = item.term.trim();
+        const startIndex = newRawText.indexOf(term);
+
+        if (startIndex !== -1) {
+          parsedAspects.push({
+            id: `manual_aspect_${Date.now()}_${idx}`,
+            term: term,
+            startIndex: startIndex,
+            endIndex: startIndex + term.length,
+            polarity: item.polarity, // 直接使用用户在下拉框里选好的极性！
+          });
+        } else {
+          message.warning(`⚠️ 方面词 "${term}" 未在原文中找到，已自动忽略。`);
+        }
+      });
+
+      // 4. 组装最终的 MultimodalData
+      const newEntry = {
+        tweetId: `custom_${Date.now()}`, // 生成唯一 ID
+        rawText: newRawText,
+        aspects: parsedAspects,
+        imageUrl: imgBase64,
+        yoloBboxes: parsedBboxes,
+      };
+
+      // 5. 存入 Zustand 仓库
+      addNewData(newEntry);
+
+      // 6. 清理战场，关闭弹窗
+      hideLoading();
+      message.success("✨ 新数据录入成功！");
+      setIsAddDataModalVisible(false);
+      setNewRawText("");
+      setManualAspects([]);
+      setNewImageFile(null);
+      setNewYoloFile(null);
+    } catch (error) {
+      hideLoading();
+      message.error("数据处理失败，请检查文件格式！");
+    }
+  };
 
   // 核心函数： 获取鼠标相对于图片容器的精确坐标
   const getRelativeCoords = (e: React.MouseEvent) => {
@@ -546,17 +688,13 @@ const Workspace: React.FC = () => {
           推文标注审查 (ID: {currentData.tweetId})
         </Title>
         <Space>
-          {/* 增加包在 Upload 里的导入按钮 
-              accept=".json" 限制了只能选择 json 文件
-              beforeUpload 钩子就是我们拦截上传的关键
-          */}
-          <Upload
-            beforeUpload={handleImportJSON}
-            showUploadList={false}
-            accept=".json"
+          <Button
+            type="primary"
+            ghost
+            onClick={() => setIsAddDataModalVisible(true)}
           >
-            <Button icon={<UploadOutlined />}>导入 Json</Button>
-          </Upload>
+            + 新增单条数据
+          </Button>
           <Button
             disabled={currentIndex === 0}
             onClick={() => {
@@ -574,6 +712,17 @@ const Workspace: React.FC = () => {
           >
             下一条
           </Button>
+          {/* 增加包在 Upload 里的导入按钮 
+              accept=".json" 限制了只能选择 json 文件
+              beforeUpload 钩子就是我们拦截上传的关键
+          */}
+          <Upload
+            beforeUpload={handleImportJSON}
+            showUploadList={false}
+            accept=".json"
+          >
+            <Button icon={<UploadOutlined />}>导入 Json</Button>
+          </Upload>
           <Button icon={<DownloadOutlined />} onClick={handleExportJSON}>
             导出当前的 JSON 文件
           </Button>
@@ -819,7 +968,148 @@ const Workspace: React.FC = () => {
         </Col>
       </Row>
 
-      {/* 优雅的输入弹窗 */}
+      {/* 数据录入的输入弹窗 */}
+      <Modal
+        title="➕ 录入单条多模态数据"
+        open={isAddDataModalVisible}
+        onOk={handleAddNewDataSubmit}
+        onCancel={() => setIsAddDataModalVisible(false)}
+        okText="确认入库"
+        cancelText="取消"
+        width={600}
+        destroyOnHidden
+      >
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "16px",
+            marginTop: "16px",
+          }}
+        >
+          <div>
+            <h4>1. 输入推文文本 (必填)</h4>
+            <Input.TextArea
+              rows={4}
+              placeholder="请输入你要分析的社交媒体推文文本..."
+              value={newRawText}
+              onChange={(e) => setNewRawText(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <h4>2. 上传关联图片 (必填)</h4>
+            <Upload
+              beforeUpload={(file) => {
+                setNewImageFile(file);
+                return false;
+              }}
+              maxCount={1}
+              accept="image/*"
+            >
+              <Button icon={<UploadOutlined />}>选择本地图片</Button>
+            </Upload>
+          </div>
+
+          {/* 👇 【新增】：方面词快捷输入框 */}
+          <div>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "8px",
+              }}
+            >
+              <h4>3. 预设方面词及其情感 (选填)</h4>
+              {/* 点击按钮，往数组里塞入一个空对象，页面上就会多出一行 */}
+              <Button
+                type="dashed"
+                size="small"
+                icon={<PlusOutlined />}
+                onClick={() =>
+                  setManualAspects([
+                    ...manualAspects,
+                    { term: "", polarity: "neutral" },
+                  ])
+                }
+              >
+                新增词汇
+              </Button>
+            </div>
+            {/* 遍历数组，渲染每一行的输入框和下拉框 */}
+            {manualAspects.map((aspect, index) => (
+              <Space
+                key={index}
+                style={{ display: "flex", marginBottom: 8 }}
+                align="baseline"
+              >
+                <Input
+                  placeholder="输入原文中存在的词..."
+                  value={aspect.term}
+                  onChange={(e) => {
+                    const newAspects = [...manualAspects];
+                    newAspects[index].term = e.target.value;
+                    setManualAspects(newAspects);
+                  }}
+                  style={{ width: "200px" }}
+                />
+                <Select
+                  value={aspect.polarity}
+                  onChange={(val) => {
+                    const newAspects = [...manualAspects];
+                    newAspects[index].polarity = val as AspectTerm["polarity"];
+                    setManualAspects(newAspects);
+                  }}
+                  style={{ width: "150px" }}
+                  options={[
+                    { value: "positive", label: "🟢 正向 (Positive)" },
+                    { value: "negative", label: "🔴 负向 (Negative)" },
+                    { value: "neutral", label: "🟡 中立 (Neutral)" },
+                  ]}
+                />
+                {/* 极其优雅的红色删除小圆钮 */}
+                <MinusCircleOutlined
+                  style={{
+                    color: "#ff4d4f",
+                    cursor: "pointer",
+                    fontSize: "16px",
+                    marginLeft: "8px",
+                  }}
+                  onClick={() => {
+                    const newAspects = [...manualAspects];
+                    newAspects.splice(index, 1); // 从数组里切除这一项
+                    setManualAspects(newAspects);
+                  }}
+                />
+              </Space>
+            ))}
+
+            <div style={{ fontSize: "12px", color: "#888", marginTop: "4px" }}>
+              * 系统会自动在文本中查找这些词，如果输入的词不在原文中将自动忽略。
+            </div>
+          </div>
+
+          <div>
+            <h4>4. 导入 YOLO 视觉标注框 (选填, .txt 格式)</h4>
+            <Upload
+              beforeUpload={(file) => {
+                setNewYoloFile(file);
+                return false;
+              }}
+              maxCount={1}
+              accept=".txt"
+            >
+              <Button icon={<UploadOutlined />}>导入 YOLO 标签文件</Button>
+            </Upload>
+            <div style={{ fontSize: "12px", color: "#888", marginTop: "4px" }}>
+              * 如果不导入，您可以稍后在工作台中使用大模型预标注或手动绘制。
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* YOLO 标注框的输入弹窗 */}
       <Modal
         title="✨ 添加视觉特征标签"
         open={isModalVisible}

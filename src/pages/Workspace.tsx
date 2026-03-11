@@ -36,6 +36,9 @@ const Workspace: React.FC = () => {
     currentData,
     currentIndex,
     isLoading,
+    currentUser,
+    logout,
+    updateDataStatus,
     fetchData,
     updateAspectPolarity,
     deleteYoloBox,
@@ -46,6 +49,7 @@ const Workspace: React.FC = () => {
     deleteAspect,
     deleteCurrentData,
     settings,
+    loadAllData,
   } = useDataState();
 
   // 首先定义去设置方面词需要用的属性
@@ -58,9 +62,13 @@ const Workspace: React.FC = () => {
     endIndex: number;
   }
 
+  // 核心锁：如果当前数据状态是 done，且当前登录人是 annotator (标注员)，那么界面就彻底上锁！
+  const isLockedForMe =
+    currentData?.status === "done" && currentUser?.role === "annotator";
+
   // 组件刚挂载到屏幕上时，我们请求第 0 条数据
   useEffect(() => {
-    fetchData(0);
+    loadAllData();
   }, []); // 空数组代表只在初次渲染时执行一次
 
   // 定义悬浮菜单的状态
@@ -146,17 +154,35 @@ const Workspace: React.FC = () => {
       return;
     }
 
-    const hideLoading = message.loading("正在处理数据入库...", 0);
+    const hideLoading = message.loading("正在将图片推送到服务器并入库...", 0);
 
     try {
-      // 1. 读取图片为 Base64
-      const imgBase64 = await getBase64(newImageFile);
+      // 1. 使用 FormData 将文件实体发给后端
+      const formData = new FormData();
+      formData.append("file", newImageFile);
+
+      const uploadRes = await fetch("http://localhost:8000/api/upload", {
+        method: "POST",
+        body: formData, // 不要设置 Content-Type,浏览器会自动处理 boundary
+      });
+
+      const uploadData = await uploadRes.json();
+      if (uploadData.status !== "success") {
+        throw new Error("图片推送到服务器失败！");
+      }
+
+      // 拿到后端返回的真实图片 URL
+      const finalImageUrl = uploadData.url;
+
+      // 2. 利用本地 URL 闪电获取图片分辨率
+      // 我们不需要等图片从后端下载回来获取分辨率，直接在本地用 URL.createObjectURL 秒算
+      const localPreivewUrl = URL.createObjectURL(newImageFile);
+      const { width: imgW, height: imgH } =
+        await getImageDimensions(localPreivewUrl);
+      URL.revokeObjectURL(localPreivewUrl); // 算完后立刻释放内存
 
       // 解析手动输入的方面词
       let parsedAspects: any[] = [];
-
-      // 2. 获取图片真实分辨率
-      const { width: imgW, height: imgH } = await getImageDimensions(imgBase64);
 
       // 3. 解析 YOLO 文件（如果存在的话）
       let parsedBboxes: any[] = [];
@@ -215,7 +241,7 @@ const Workspace: React.FC = () => {
         tweetId: `custom_${Date.now()}`, // 生成唯一 ID
         rawText: newRawText,
         aspects: parsedAspects,
-        imageUrl: imgBase64,
+        imageUrl: finalImageUrl,
         yoloBboxes: parsedBboxes,
       };
 
@@ -232,7 +258,7 @@ const Workspace: React.FC = () => {
       setNewYoloFile(null);
     } catch (error) {
       hideLoading();
-      message.error("数据处理失败，请检查文件格式！");
+      message.error(`🚨 数据录入中断: ${error}`);
     }
   };
 
@@ -253,6 +279,11 @@ const Workspace: React.FC = () => {
 
   // 鼠标按下：开始画！记录起点
   const handleMouseDown = (e: React.MouseEvent) => {
+    // 👇 【新增】：如果是锁定状态，直接不让画
+    if (isLockedForMe) {
+      message.warning("🔒 该数据已审核通过，无法绘制新框！");
+      return;
+    }
     const { x, y } = getRelativeCoords(e);
     setDrawingState({
       isDrawing: true,
@@ -366,6 +397,12 @@ const Workspace: React.FC = () => {
   // 监听鼠标松开事件，捕获划词
   const handleMouseUp = (e: React.MouseEvent) => {
     if (!currentData) return;
+
+    if (isLockedForMe) {
+      window.getSelection()?.removeAllRanges(); // 清除蓝色选中状态
+      message.warning("🔒 该数据已审核通过，无法添加新词汇！");
+      return;
+    }
 
     const selection = window.getSelection();
 
@@ -544,7 +581,7 @@ const Workspace: React.FC = () => {
           message.error("JSON 格式不合法：缺少 MABSA 核心字段。");
         }
       } catch (error) {
-        message.error("'解析失败，请确保文件是标准 JSON 格式。'");
+        message.error("解析失败，请确保文件是标准 JSON 格式。");
       }
     };
     // 命令 reader 已纯文本的形式去读取这个文件
@@ -555,7 +592,7 @@ const Workspace: React.FC = () => {
   };
 
   // 如果数据还没回来，或者正在请求中，我们展示“骨架屏”
-  if (isLoading || !currentData) {
+  if (isLoading) {
     return (
       <div style={{ padding: "20px" }}>
         <Title level={3}>加载中...</Title>
@@ -687,8 +724,35 @@ const Workspace: React.FC = () => {
         }}
       >
         <Title level={3} style={{ margin: 0 }}>
-          推文标注审查 (ID: {currentData.tweetId})
+          推文标注审查 (ID: {currentData?.tweetId}){/* 数据状态锁的视觉展示 */}
+          {currentData?.status === "done" && (
+            <span
+              style={{
+                marginLeft: 16,
+                fontSize: 14,
+                color: "#52c41a",
+                background: "#f6ffed",
+                padding: "4px 8px",
+                border: "1px solid #b7eb8f",
+                borderRadius: 4,
+              }}
+            >
+              🔒 审核已通过 (不可篡改)
+            </span>
+          )}
         </Title>
+
+        {/* 👇 右上角的身份展示与退出按钮 */}
+        <div>
+          <span style={{ marginRight: 16, color: "#888" }}>
+            当前登录: <b>{currentUser?.username}</b>(
+            {currentUser?.role === "reviewer" ? "🕵️‍♂️ 审核员" : "👨‍💻 标注员"})
+          </span>
+          <Button onClick={logout} danger type="dashed">
+            退出系统
+          </Button>
+        </div>
+
         <Space>
           <Button
             type="primary"
@@ -697,25 +761,52 @@ const Workspace: React.FC = () => {
           >
             + 新增单条数据
           </Button>
-          <Popconfirm
-            title="⚠️ 警告：永久删除数据"
-            description="确定要从系统中彻底删除当前这条推文的所有数据吗？此操作无法撤销！"
-            onConfirm={() => {
-              deleteCurrentData();
-              message.success("🗑️ 数据已彻底销毁！");
-            }}
-            okText="确定删除"
-            cancelText="取消"
-            okButtonProps={{ danger: true }} // 让确认按钮变成醒目的红色
-          >
-            <Button
-              danger
-              icon={<DeleteOutlined />}
-              disabled={dataList.length === 0} // 如果没数据了，按钮置灰
+          {!isLockedForMe && (
+            <Popconfirm
+              title="⚠️ 警告：永久删除数据"
+              description="确定要从系统中彻底删除当前这条推文的所有数据吗？此操作无法撤销！"
+              disabled={isLockedForMe}
+              onConfirm={() => {
+                deleteCurrentData();
+                message.success("🗑️ 数据已彻底销毁！");
+              }}
+              okText="确定删除"
+              cancelText="取消"
+              okButtonProps={{ danger: true }} // 让确认按钮变成醒目的红色
             >
-              删除当前数据
-            </Button>
-          </Popconfirm>
+              <Button
+                danger
+                icon={<DeleteOutlined />}
+                disabled={dataList.length === 0 || isLockedForMe} // 如果没数据了，按钮置灰
+              >
+                删除当前数据
+              </Button>
+            </Popconfirm>
+          )}
+
+          {/* 👇 只有审核员才能看到这个按钮块！ */}
+          {currentUser?.role === "reviewer" && currentData && (
+            <>
+              {currentData.status !== "done" ? (
+                <Button
+                  type="primary"
+                  style={{ background: "#52c41a" }}
+                  onClick={() => updateDataStatus(currentData.tweetId, "done")}
+                >
+                  ✅ 标记为审核通过
+                </Button>
+              ) : (
+                <Button
+                  danger
+                  onClick={() =>
+                    updateDataStatus(currentData.tweetId, "pending")
+                  }
+                >
+                  ↩️ 撤销审核 (打回修改)
+                </Button>
+              )}
+            </>
+          )}
           <Button
             disabled={currentIndex === 0}
             onClick={() => {
@@ -762,233 +853,264 @@ const Workspace: React.FC = () => {
             }}
             onClick={handleAIpredict}
             loading={isPredicting} // 显示转圈圈动画
-            disabled={isPredicting} // 在一个实例的预测期间禁止再次进行点击
+            disabled={isPredicting || isLockedForMe} // 在一个实例的预测期间禁止再次进行点击
           >
             ✨ 呼叫 AI 智能预标注
           </Button>
         </Space>
       </div>
-      <Row gutter={24}>
-        {/* 左侧：把 mockData 换成 currentData */}
-        <Col span={12}>
-          <Card title="文本特征分析" style={{ minHeight: "500px" }}>
-            <Paragraph
-              style={{ fontSize: "18px", lineHeight: "1.8", cursor: "text" }}
-              onClick={handleMouseUp}
-            >
-              {renderHighlightedText(currentData.rawText, currentData.aspects)}
-            </Paragraph>
-            <div style={{ marginTop: "20px" }}>
-              <h4>识别到的实体 (Aspects) - 点击可修改:</h4>
-              {currentData.aspects.map((aspect) => {
-                const menuItems: MenuProps["items"] = [
-                  { key: "positive", label: "🟢 正向 (Positive)" },
-                  { key: "negative", label: "🔴 负向 (Negative)" },
-                  { key: "neutral", label: "🟡 中立 (Neutral)" },
-                ];
 
-                return (
-                  <Dropdown
-                    key={aspect.id}
-                    trigger={["click"]}
-                    menu={{
-                      items: menuItems,
-                      onClick: (e) => {
-                        updateAspectPolarity(
-                          currentData.tweetId,
-                          aspect.id,
-                          e.key as any,
-                        );
-                      },
-                    }}
-                  >
-                    <Tag
-                      // 拦截鼠标右键，执行删除操作
-                      onContextMenu={(e) => {
-                        e.preventDefault(); // 阻止浏览器默认的右键菜单弹出
-                        deleteAspect(currentData.tweetId, aspect.id);
-                        message.success("🗑️ 已永久移除该方面词");
+      {currentData ? (
+        <Row gutter={24}>
+          {/* 左侧：把 mockData 换成 currentData */}
+          <Col span={12}>
+            <Card title="文本特征分析" style={{ minHeight: "500px" }}>
+              <Paragraph
+                style={{ fontSize: "18px", lineHeight: "1.8", cursor: "text" }}
+                onClick={handleMouseUp}
+              >
+                {renderHighlightedText(
+                  currentData.rawText,
+                  currentData.aspects,
+                )}
+              </Paragraph>
+              <div style={{ marginTop: "20px" }}>
+                <h4>识别到的实体 (Aspects) - 点击可修改:</h4>
+                {currentData.aspects.map((aspect) => {
+                  const menuItems: MenuProps["items"] = [
+                    { key: "positive", label: "🟢 正向 (Positive)" },
+                    { key: "negative", label: "🔴 负向 (Negative)" },
+                    { key: "neutral", label: "🟡 中立 (Neutral)" },
+                  ];
+
+                  return (
+                    <Dropdown
+                      key={aspect.id}
+                      trigger={["click"]}
+                      disabled={isLockedForMe} // 👈 【新增】：锁死下拉菜单
+                      menu={{
+                        items: menuItems,
+                        onClick: (e) => {
+                          updateAspectPolarity(
+                            currentData.tweetId,
+                            aspect.id,
+                            e.key as any,
+                          );
+                        },
                       }}
-                      style={{
-                        fontSize: "16px",
-                        padding: "5px 10px",
-                        cursor: "pointer",
-                      }}
-                      color={
-                        aspect.polarity === "positive"
-                          ? "success"
-                          : aspect.polarity === "negative"
-                            ? "error"
-                            : "warning"
-                      }
                     >
-                      {aspect.term} [{aspect.polarity}]
-                    </Tag>
-                  </Dropdown>
-                );
-              })}
-            </div>
-          </Card>
-        </Col>
+                      <Tag
+                        // 拦截鼠标右键，执行删除操作
+                        onContextMenu={(e) => {
+                          e.preventDefault(); // 阻止浏览器默认的右键菜单弹出
+                          // 👇 【新增】：锁定状态不让删
+                          if (isLockedForMe) {
+                            message.warning("🔒 该数据已审核通过，无法删除！");
+                            return;
+                          }
+                          deleteAspect(currentData.tweetId, aspect.id);
+                          message.success("🗑️ 已永久移除该方面词");
+                        }}
+                        style={{
+                          fontSize: "16px",
+                          padding: "5px 10px",
+                          cursor: "pointer",
+                        }}
+                        color={
+                          aspect.polarity === "positive"
+                            ? "success"
+                            : aspect.polarity === "negative"
+                              ? "error"
+                              : "warning"
+                        }
+                      >
+                        {aspect.term} [{aspect.polarity}]
+                      </Tag>
+                    </Dropdown>
+                  );
+                })}
+              </div>
+            </Card>
+          </Col>
 
-        {/* 在整个页面的最外层，加上我们的悬浮菜单
+          {/* 在整个页面的最外层，加上我们的悬浮菜单
             只有当 selectionWord 存在并且 visible 为 true 时才进行菜单的渲染 */}
-        {selectedWord && selectedWord.visible && (
-          <div
-            ref={popupRef}
-            style={{
-              position: "fixed",
-              left: `${selectedWord.x}`,
-              top: `${selectedWord.y}`,
-              backgroundColor: "#fff",
-              boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
-              borderRadius: "8px",
-              padding: "10px",
-              zIndex: 1000,
-              display: "flex",
-              flexDirection: "column",
-              gap: "8px",
-            }}
-          >
-            <div style={{ fontSize: "12px", color: "#888" }}>
-              标记<strong>"{selectedWord.term}"</strong>为：
-            </div>
-            <Space>
-              <Button
-                size="small"
-                style={{ borderColor: "#52c41a", color: "#52c41a" }}
-                onClick={() => confirmAddAspect("positive")}
-              >
-                Positive
-              </Button>
-              <Button
-                size="small"
-                style={{ borderColor: "#52c41a", color: "#52c41a" }}
-                onClick={() => confirmAddAspect("negative")}
-              >
-                Negative
-              </Button>
-              <Button
-                size="small"
-                style={{ borderColor: "#52c41a", color: "#52c41a" }}
-                onClick={() => confirmAddAspect("neutral")}
-              >
-                Neutral
-              </Button>
-            </Space>
-          </div>
-        )}
-
-        {/* 右侧：同样把 mockData 换成 currentData */}
-        <Col span={12}>
-          <Card title="YOLO 视觉特征" style={{ minHeight: "500px" }}>
+          {selectedWord && selectedWord.visible && (
             <div
-              ref={imageContainerRef}
+              ref={popupRef}
               style={{
-                position: "relative",
-                display: "inline-block",
-                cursor: "crosshair", // 鼠标会变成专业的准星十字
-                overflow: "hidden", // 限制 框 不能画出图片边界
+                position: "fixed",
+                left: `${selectedWord?.x || 0}px`,
+                top: `${selectedWord?.y || 0}px`,
+                backgroundColor: "#fff",
+                boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
+                borderRadius: "8px",
+                padding: "10px",
+                zIndex: 1000,
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px",
               }}
-              onMouseDown={handleMouseDown}
-              onMouseUp={handleDrawMouseUp}
-              onMouseMove={handleMouseMove}
-              onMouseLeave={handleDrawMouseUp}
             >
-              <img
-                src={currentData.imageUrl}
-                alt="visual context"
-                style={{ maxWidth: "100%", height: "auto", display: "block" }}
-                draggable={false} // 【极其重要】：禁止浏览器原生拖拽图片的行为！否则会和你画框打架
-              />
-              {currentData.yoloBboxes.map((box) => (
-                <div
-                  key={box.id}
-                  style={{
-                    position: "absolute",
-                    left: `${box.x}px`,
-                    top: `${box.y}px`,
-                    width: `${box.width}px`,
-                    height: `${box.height}px`,
-                    border: "2px solid #f5222d",
-                    backgroundColor: "rgba(245, 34, 45, 0.2)",
-                  }}
+              <div style={{ fontSize: "12px", color: "#888" }}>
+                标记<strong>"{selectedWord.term}"</strong>为：
+              </div>
+              <Space>
+                <Button
+                  size="small"
+                  style={{ borderColor: "#52c41a", color: "#52c41a" }}
+                  onClick={() => confirmAddAspect("positive")}
                 >
-                  <span
+                  Positive
+                </Button>
+                <Button
+                  size="small"
+                  style={{ borderColor: "#52c41a", color: "#52c41a" }}
+                  onClick={() => confirmAddAspect("negative")}
+                >
+                  Negative
+                </Button>
+                <Button
+                  size="small"
+                  style={{ borderColor: "#52c41a", color: "#52c41a" }}
+                  onClick={() => confirmAddAspect("neutral")}
+                >
+                  Neutral
+                </Button>
+              </Space>
+            </div>
+          )}
+
+          {/* 右侧：同样把 mockData 换成 currentData */}
+          <Col span={12}>
+            <Card title="YOLO 视觉特征" style={{ minHeight: "500px" }}>
+              <div
+                ref={imageContainerRef}
+                style={{
+                  position: "relative",
+                  display: "inline-block",
+                  cursor: "crosshair", // 鼠标会变成专业的准星十字
+                  overflow: "hidden", // 限制 框 不能画出图片边界
+                }}
+                onMouseDown={handleMouseDown}
+                onMouseUp={handleDrawMouseUp}
+                onMouseMove={handleMouseMove}
+                onMouseLeave={handleDrawMouseUp}
+              >
+                <img
+                  src={currentData.imageUrl}
+                  alt="visual context"
+                  style={{ maxWidth: "100%", height: "auto", display: "block" }}
+                  draggable={false} // 【极其重要】：禁止浏览器原生拖拽图片的行为！否则会和你画框打架
+                />
+                {currentData.yoloBboxes.map((box) => (
+                  <div
+                    key={box.id}
                     style={{
                       position: "absolute",
-                      top: "-24px",
-                      left: "-2px",
-                      backgroundColor: "#f5222d",
-                      color: "white",
-                      fontSize: "12px",
-                      padding: "2px 6px",
-                      borderRadius: "4px 4px 0 0",
-                      whiteSpace: "nowrap",
+                      left: `${box.x}px`,
+                      top: `${box.y}px`,
+                      width: `${box.width}px`,
+                      height: `${box.height}px`,
+                      border: "2px solid #f5222d",
+                      backgroundColor: "rgba(245, 34, 45, 0.2)",
                     }}
                   >
-                    {box.label}
-                    {/* 只有当设置允许显示置信度时，才渲染百分比  */}
-                    {settings.showConfidence &&
-                      `${(box.confidence * 100).toFixed(0)}%`}
-                  </span>
-
-                  {/* 增加对象框右上角的删除按钮 */}
-                  <Popconfirm
-                    title="删除提示"
-                    description="确定要删除这个机器视觉标注框吗？"
-                    onConfirm={(e) => {
-                      e?.stopPropagation();
-                      deleteYoloBox(currentData.tweetId, box.id);
-                    }}
-                    onCancel={(e) => e?.stopPropagation()} // 取消时也阻止冒泡
-                    okText="确定"
-                    cancelText="取消"
-                  >
-                    <CloseCircleFilled
-                      onClick={(e) => e.stopPropagation()}
-                      onMouseDown={(e) => e.stopPropagation()}
+                    <span
                       style={{
                         position: "absolute",
-                        top: "-10px",
-                        right: "-10px", // 删除按钮的位置放置在框的右上角部分
-                        fontSize: "18px",
-                        color: "#f5222d",
-                        backgroundColor: "#fff",
-                        borderRadius: "50%",
-                        cursor: "pointer",
-                        zIndex: 10, // 保证删除按钮在最上层，不会被别的盖住
+                        top: "-24px",
+                        left: "-2px",
+                        backgroundColor: "#f5222d",
+                        color: "white",
+                        fontSize: "12px",
+                        padding: "2px 6px",
+                        borderRadius: "4px 4px 0 0",
+                        whiteSpace: "nowrap",
                       }}
-                    />
-                  </Popconfirm>
-                </div>
-              ))}
+                    >
+                      {box.label}
+                      {/* 只有当设置允许显示置信度时，才渲染百分比  */}
+                      {settings.showConfidence &&
+                        `${(box.confidence * 100).toFixed(0)}%`}
+                    </span>
 
-              {/* 渲染正在画的半透明“幽灵虚线框” */}
-              {drawingState.isDrawing && (
-                <div
-                  style={{
-                    position: "absolute",
-                    left: `${Math.min(drawingState.currentX, drawingState.startX)}px`,
-                    top: `${Math.min(drawingState.currentY, drawingState.startY)}px`,
-                    width: `${Math.abs(drawingState.currentX - drawingState.startX)}px`,
-                    height: `${Math.abs(drawingState.currentY - drawingState.startY)}px`,
-                    border: "2px dashed #1890ff", // 蓝色虚线
-                    backgroundColor: "rgba(24,144,255,0.2)", // 蓝色半透明填充
+                    {/* 增加对象框右上角的删除按钮 */}
+                    {!isLockedForMe && (
+                      <Popconfirm
+                        title="删除提示"
+                        description="确定要删除这个机器视觉标注框吗？"
+                        onConfirm={(e) => {
+                          e?.stopPropagation();
+                          deleteYoloBox(currentData.tweetId, box.id);
+                        }}
+                        onCancel={(e) => e?.stopPropagation()} // 取消时也阻止冒泡
+                        okText="确定"
+                        cancelText="取消"
+                      >
+                        <CloseCircleFilled
+                          onClick={(e) => e.stopPropagation()}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          style={{
+                            position: "absolute",
+                            top: "-10px",
+                            right: "-10px", // 删除按钮的位置放置在框的右上角部分
+                            fontSize: "18px",
+                            color: "#f5222d",
+                            backgroundColor: "#fff",
+                            borderRadius: "50%",
+                            cursor: "pointer",
+                            zIndex: 10, // 保证删除按钮在最上层，不会被别的盖住
+                          }}
+                        />
+                      </Popconfirm>
+                    )}
+                  </div>
+                ))}
 
-                    //【大厂面试必考点】：这行极其关键！
-                    // 因为这个框会跟在你的鼠标下面，如果没有这行，鼠标就会悬停在框上
-                    // 导致父元素的 mousemove 事件被遮挡中断，拖拽就会立刻卡死
-                    pointerEvents: "none",
-                    zIndex: 999, // 保证画的时候在最顶层
-                  }}
-                />
-              )}
-            </div>
-          </Card>
-        </Col>
-      </Row>
+                {/* 渲染正在画的半透明“幽灵虚线框” */}
+                {drawingState.isDrawing && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: `${Math.min(drawingState.currentX, drawingState.startX)}px`,
+                      top: `${Math.min(drawingState.currentY, drawingState.startY)}px`,
+                      width: `${Math.abs(drawingState.currentX - drawingState.startX)}px`,
+                      height: `${Math.abs(drawingState.currentY - drawingState.startY)}px`,
+                      border: "2px dashed #1890ff", // 蓝色虚线
+                      backgroundColor: "rgba(24,144,255,0.2)", // 蓝色半透明填充
 
+                      //【大厂面试必考点】：这行极其关键！
+                      // 因为这个框会跟在你的鼠标下面，如果没有这行，鼠标就会悬停在框上
+                      // 导致父元素的 mousemove 事件被遮挡中断，拖拽就会立刻卡死
+                      pointerEvents: "none",
+                      zIndex: 999, // 保证画的时候在最顶层
+                    }}
+                  />
+                )}
+              </div>
+            </Card>
+          </Col>
+        </Row>
+      ) : (
+        // 👇 如果没数据，显示极其优雅的空状态提示
+        <div
+          style={{
+            textAlign: "center",
+            padding: "100px 20px",
+            background: "#fafafa",
+            borderRadius: "8px",
+            marginTop: "20px",
+          }}
+        >
+          <Title level={4} style={{ color: "#888" }}>
+            📦 数据库当前空空如也
+          </Title>
+          <p style={{ color: "#aaa" }}>
+            请点击右上角的“+ 新增单条数据”开始您的标注工作吧！
+          </p>
+        </div>
+      )}
       {/* 数据录入的输入弹窗 */}
       <Modal
         title="➕ 录入单条多模态数据"

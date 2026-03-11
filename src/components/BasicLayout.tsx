@@ -73,7 +73,7 @@ const BasicLayout: React.FC = () => {
       <Layout>
         {/* 顶部导航栏 */}
         <Header style={{ padding: 0, background: colorBgContainer }}>
-          <h2 style={{ margin: "0 20px" }}>多模态情感分析（MABSA）平台</h2>
+          <h2 style={{ margin: "0 20px" }}>多模态方面级情感分析（MABSA）数据审核标注平台</h2>
         </Header>
 
         {/* 核心内容区 */}

@@ -28,4 +28,8 @@ export type MultimodalData = {
     aspects: AspectTerm[], // 该文本包含的方面词集合（有些不止一个方面词）
     imageUrl: string,
     yoloBboxes: BoundingBox[]
+
+    // 新增：为了权限系统准备的字段
+    status?: 'pending' | 'done', // 当前数据的状态：待审核 / 已完成
+    annotator?: string // 这条数据是谁标的？
 }

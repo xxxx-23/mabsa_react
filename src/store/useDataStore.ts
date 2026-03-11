@@ -1,6 +1,23 @@
 import {create} from 'zustand'
 import { type AspectTerm, type BoundingBox, type MultimodalData } from '../types'
-import { mockDataList } from '../utils/mockData'
+
+// 定义用户类型
+export interface User {
+    username: string,
+    role: 'annotator' | 'reviewer'
+}
+
+
+// 后台静默同步函数
+// 只要前端数据发生改变，就进行调用，悄悄把当前数据覆盖到数据库里
+const syncToBackend = (data: MultimodalData) => {
+    fetch("http://localhost:8000/api/data/save", {
+        method:"POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(data)
+    }).catch(err=>console.error("🚨 数据库同步失败:",err))
+}
+
 
 // 定义这个 ‘仓库’ 里都有什么存货，以及能执行什么操作
 interface DataStore {
@@ -18,12 +35,19 @@ interface DataStore {
         showConfidence: boolean // 是否显示 YOLO 框上的置信度
     }
 
+    // 新增的身份认证中枢
+    currentUser: User | null
+    login: (username: string, role: User['role']) => void
+    logout: () => void
+
     // 更新设置的方法
     updateSettings: (newSettings: Partial<DataStore["settings"]>) => void
 
+    // 全新接口：从 Python 数据库加载全量大盘数据
+    loadAllData: () => Promise<void>
 
-    // 操作方法 (获取数据)
-    fetchData: (index: number) => Promise<void> // 模拟请求后端接口
+    // 重写接口：在内存中纯粹地切换上一条/下一条
+    fetchData: (index: number) => void
 
     // 定义修改情感极性的方法类型
     // 告诉仓库：我需要修改哪条推文、哪个词、改成什么极性
@@ -46,29 +70,16 @@ interface DataStore {
 
     // 删除当前正在展示的整条数据
     deleteCurrentData: () => void
+
+    // 审核员专属的状态修改方法
+    updateDataStatus: (tweetId: string, newStatus: 'pending' | 'done') => void
 }
 
 // 从本地硬盘（localStorage）“捞”数据
-const LOCAL_STORAGE_KEY = "MABSA_ANNOTATION_STATE"
+// const LOCAL_STORAGE_KEY = "MABSA_ANNOTATION_STATE"
+// 我们抛弃了沉重的数据 localStorage，但保留了轻量级的“用户设置”
+const savedSettings = JSON.parse(localStorage.getItem("MABSA_SETTINGS") || "null")
 
-const loadStateFromStorage = () => {
-    try {
-        const saved = localStorage.getItem(LOCAL_STORAGE_KEY)
-        if(saved){
-            return JSON.parse(saved)
-        }
-    } catch(error) {
-        console.log("读取本地缓存失败，将使用默认数据：",error)
-    }
-    return null
-}
-
-// 在创建仓库前，先把本地数据提出来
-const savedState = loadStateFromStorage()
-
-// 1. 在 Zustand store 的外部（模块作用域内）准备一个变量，用来当“杀手”
-// 如果是真实的 fetch 请求，这里会存一个 AbortController 实例
-let currentTimer: ReturnType<typeof setTimeout> | null = null
 
 // 创建并导出一个 hook
 // create<T>((set, get) => ({ ... })): 这是标准的创建方式。它接收一个函数，该函数返回状态对象。
@@ -76,53 +87,67 @@ let currentTimer: ReturnType<typeof setTimeout> | null = null
 // get：用于需要在操作中读取当前状态（而不通过参数传入）
 export const useDataState = create<DataStore>((set, get)=>({
     // 初始化时，把原来的假数据装进数据池
-    dataList: savedState?.dataList || [...mockDataList],
-    currentData: savedState?.currentData || null,
-    currentIndex: savedState?.currentIndex || 0,
+    dataList: [],
+    currentData: null,
+    currentIndex: 0,
     
     // isLoading 这种临时 UI 状态绝对不能缓存，永远初始化为 false 
     isLoading: false,
 
     // 初始化默认设置
-    settings: savedState?.settings || {
+    settings: savedSettings || {
         autoNext: false,
         showConfidence: false
     },
-    
 
-    // 一个异步函数，用来模拟真实的后端 API 请求
-    fetchData: async (index: number) => {
+    // 尝试从本地缓存恢复登录状态
+    currentUser: JSON.parse(localStorage.getItem("MABSA_USER") || "null"),
 
-        // 核心 Cleanup 逻辑：杀掉上一个还没执行完的请求！
-        if(currentTimer) {
-            clearTimeout(currentTimer) // 取消掉上一次的 setTimeout
-            // 如果是真实的接口请求，这里会写: currentAbortController.abort()
-        }
-
-        // 1. 刚开始请求，把 isLoading 设为 true，告诉页面要转圈圈了
-        set({ isLoading: true})
-
-        // 2. 模拟网络延迟
-        // 把这一次的定时器 ID 存起来，方便下次如果又被频繁点击时，能把它杀掉
-        await new Promise((resolve) => {currentTimer = setTimeout(resolve, 800)})
-
-        // 3. 从假数据库里取出对应的数据
-        // const data = mockDataList[index]
-        // 修改为：从仓库自己的 dataList 里拿数据，而不是去读外部的 mockDataList
-        const state = get()
-
-        // 数据拿到了，更新仓库，并把 isLoading 设回 false 
-        set({
-            currentData: state.dataList[index],
-            currentIndex: index,
-            isLoading: false
-        })
-
-        // 执行完后，把“杀手”变量清空
-        currentTimer = null
+    login: (username, role) => {
+        const user = {username, role}
+        localStorage.setItem("MABSA_USER",JSON.stringify(user))
+        set({currentUser: user})
     },
 
-    // 实现修改逻辑（深层嵌套对象更新）
+    logout: () => {
+        localStorage.removeItem("MABSA_USER")
+        set({currentUser:null})
+    },
+    
+    // 1. 初始化：去数据库拉取全部数据
+    loadAllData: async () => {
+      set({ isLoading: true}) 
+      try {
+        const res = await fetch("http://localhost:8000/api/data/list")
+        const json = await res.json()
+
+        if(json.status === "success"){
+            const list = json.data
+            set({
+                dataList: list,
+                currentData: list.length > 0 ? list[0] :null,
+                currentIndex: 0,
+                isLoading: false
+            })
+        }
+      } catch (error) {
+        console.error("🚨 无法连接到数据库:",error)
+        set({isLoading:false})
+      } 
+    },
+
+    // 2. 分页切换：不再有假延迟，直接内存急速切换
+    fetchData: async (index: number) => {
+        const state = get()
+        if(index >= 0 && index < state.dataList.length) {
+            set({
+                currentIndex: index,
+                currentData: state.dataList[index]
+            })
+        }
+    },
+
+    // 3. 更新情感极性：乐观更新 UI，然后同步数据库
     updateAspectPolarity: (tweetId, aspectId, newPolarity) => {
         set((state) => {
             // 1. 安全检查：如果当前没数据，或者 ID 对不上，直接不做处理
@@ -131,21 +156,18 @@ export const useDataState = create<DataStore>((set, get)=>({
             }
 
             // 2. 遍历当前的 aspects 数组，找到那个被点击的词，只修改它的极性，其他词原样保留
-            const updatedAspects = state.currentData.aspects.map((aspect) => {
-                if(aspect.id === aspectId){
-                    // 找到了对应的 aspect，用 ... 复制它的旧属性，然后用 newPolarity 覆盖旧的 polarity
-                    return {...aspect, polarity: newPolarity}
-                }
-                // 没找到的词，直接原样返回
-                return aspect
-            })
+            const updatedAspects = state.currentData.aspects.map((aspect) => 
+                aspect.id === aspectId ? {...aspect, polarity: newPolarity} : aspect
+            )
+
+            const updatedCurrentData = { ...state.currentData, aspects: updatedAspects}
+
+            syncToBackend(updatedCurrentData)
 
             // 3. 返回一个全新的状态对象，替换掉旧的
             return {
-                currentData: {
-                    ...state.currentData,
-                    aspects: updatedAspects
-                }
+                currentData: updatedCurrentData,
+                dataList: state.dataList.map(data => data.tweetId === tweetId ? updatedCurrentData : data) 
             }
         })
 
@@ -162,6 +184,8 @@ export const useDataState = create<DataStore>((set, get)=>({
                 // 2. 组装最新的 currentData
                 const updatedCurrentData = { ...state.currentData, yoloBboxes: updatedBboxes };
 
+                syncToBackend(updatedCurrentData) // 同步入库
+
                 // 3. 同时更新当前屏幕显示 (currentData) 和 历史总库 (dataList) ！！！
                 return {
                     currentData: updatedCurrentData,
@@ -177,6 +201,8 @@ export const useDataState = create<DataStore>((set, get)=>({
                 const updatedAspects = state.currentData.aspects.filter(a => a.id !== aspectId);
                 const updatedCurrentData = { ...state.currentData, aspects: updatedAspects };
 
+                syncToBackend(updatedCurrentData) // 同步入库
+
                 return {
                     currentData: updatedCurrentData,
                     dataList: state.dataList.map(data => data.tweetId === tweetId ? updatedCurrentData : data)
@@ -186,6 +212,10 @@ export const useDataState = create<DataStore>((set, get)=>({
 
     // 实现导入外部数据的功能--添加新数据
     addNewData: (newData) => {
+
+        // 直接同步给后端
+        syncToBackend(newData)
+
         set((state) => {
             // 1. 把新数据追加到列表的末尾
             const newList = [...state.dataList,newData]
@@ -214,6 +244,8 @@ export const useDataState = create<DataStore>((set, get)=>({
                 aspects: updatedAspects
             }
 
+            syncToBackend(updateCurrentData) // 同步入库
+
             // 返回新的状态（注意：为了保持同步，我们最好把 dataList 里的那条数据也更新了）
             return {
                 currentData: updateCurrentData,
@@ -240,6 +272,8 @@ export const useDataState = create<DataStore>((set, get)=>({
                 yoloBboxes: updatedBboxes
             }
 
+            syncToBackend(updatedCurrentData) // 同步入库
+
             return {
                 currentData:updatedCurrentData,
                 // 同步更新数据大盘（如果有用 dataList的话）
@@ -255,59 +289,64 @@ export const useDataState = create<DataStore>((set, get)=>({
         }))
     },
 
-    // 删除当前展示数据的逻辑
-    deleteCurrentData: () => {
-        set((state)=>{
-            // 1. 防御：如果列表本来就是空的
-            if(state.dataList.length === 0) return state
+    // 物理删除当前展示的数据
+    deleteCurrentData: async () => {
+        const state = get()
+        if(state.dataList.length === 0 || !state.currentData) return
 
-            // 2. 复制一份新的列表，准备进行删除操作
+        const targetId = state.currentData.tweetId
+
+        // 及其重要！！！
+        // 先让后端删除！！如果后端删不掉，前端绝不能先动手，以保证数据一致性
+        try {
+            await fetch(`http://localhost:8000/api/data/delete/${targetId}`,{ method: "DELETE"})
+        } catch (error) {
+            console.error("🚨 彻底销毁数据失败:",error)
+            return
+        }
+
+        // 后端成功后，更新前端页面
+        set((state) => {
             const newList = [...state.dataList]
-
-            // 3. 从数组中精确切除当前这条数据
             newList.splice(state.currentIndex, 1)
 
-            // 4. 情况 A：如果切完之后，列表彻底空了
             if(newList.length === 0){
-                return{
-                    dataList: [],
-                    currentData: null,
-                    currentIndex: 0
-                }
+                return {dataList: [], currentData: null, currentIndex: 0}
             }
 
-            // 5. 情况 B：列表还有数据，计算下一个该上屏的是谁
-            // 如果你删掉的是最后一条，现在的 currentIndex 就会导致数组越界（比如删了下标 5，新数组最大只有 4）
-            // 所以我们要取 Math.min(原下标, 新数组的最大下标)
             const newIndex = Math.min(state.currentIndex, newList.length - 1)
-            const newCurrentData = newList[newIndex]
-
-            // 6. 更新仓库
             return {
                 dataList: newList,
-                currentData: newCurrentData,
-                currentIndex: newIndex
-            };
+                currentData: newList[newIndex],
+                currentIndex:newIndex
+            }
+            
+        })
+    },
+
+    // 审核员专属的数据状态修改方法(依旧使用乐观更新)
+    updateDataStatus: (tweetId, newStatus) => {
+        set((state) => {
+            if(!state.currentData || state.currentData.tweetId !== tweetId) return state
+
+            // 把状态改成 done 或 pending
+            const updatedCurrentData = {...state.currentData,status: newStatus}
+
+            syncToBackend(updatedCurrentData) // 马上把数据静默同步给 Python 数据库
+
+            return {
+                currentData: updatedCurrentData,
+                dataList: state.dataList.map(data => data.tweetId === tweetId ? updatedCurrentData : data)
+            }
         })
     }
 
+
 }))
 
-// 监听仓库变化，自动存入 localStorage
-// Zustand 的 subscribe 订阅机制
+// 只保留偏好设置（如是否显示置信度）在 LocalStorage 里
 useDataState.subscribe((state) => {
     try {
-        // 每次状态改变，我们就把最新的数据组装成一个对象
-        // 注意：刻意排除了 isLoading，并且用 try-catch 包裹防止浏览器隐私模式下报错
-        const stateToSave = {
-            dataList: state.dataList,
-            currentIndex: state.currentIndex,
-            currentData: state.currentData,
-            settings: state.settings
-        }
-        // 序列化并存入浏览器硬盘
-        localStorage.setItem(LOCAL_STORAGE_KEY,JSON.stringify(stateToSave))
-    } catch (error) {
-        console.error("持久化数据到本地失败：",error);
-    }
+        localStorage.setItem("MABSA_SETTINGS",JSON.stringify(state.settings))
+    } catch (error) {}
 })

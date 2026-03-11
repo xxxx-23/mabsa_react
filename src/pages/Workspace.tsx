@@ -116,14 +116,14 @@ const Workspace: React.FC = () => {
   const [newYoloFile, setNewYoloFile] = useState<File | null>(null);
 
   // 工具 1：把图片 File 转换成 Base64 字符串
-  const getBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = (error) => reject(error);
-    });
-  };
+  // const getBase64 = (file: File): Promise<string> => {
+  //   return new Promise((resolve, reject) => {
+  //     const reader = new FileReader();
+  //     reader.readAsDataURL(file);
+  //     reader.onload = () => resolve(reader.result as string);
+  //     reader.onerror = (error) => reject(error);
+  //   });
+  // };
 
   // 工具 2：获取 Base64 图片的真实物理宽高（YOLO 逆运算极其需要！）
   const getImageDimensions = (

@@ -1,5 +1,5 @@
 import { Card, Button, Input, Select, Typography, Space, Layout } from "antd";
-import { UserOutlined, LockOutlined } from "@ant-design/icons";
+import { UserOutlined} from "@ant-design/icons";
 import { useState } from "react";
 import BasicLayout from "./components/BasicLayout";
 import { useDataState } from "./store/useDataStore";

@@ -726,6 +726,11 @@ const Workspace: React.FC = () => {
 
         hideLoading();
         message.success("✨ AI 预标注成功上屏！请进行人工核验。");
+        setIsPredicting(false);
+      } else {
+        // 👇 【新增兜底】：处理后端主动抛出的业务错误，销毁转圈提示
+        hideLoading();
+        message.error(`🚨 AI 处理失败: ${result.message}`);
       }
     } catch (error) {
       hideLoading();

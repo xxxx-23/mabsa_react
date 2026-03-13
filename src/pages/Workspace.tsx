@@ -742,80 +742,190 @@ const Workspace: React.FC = () => {
 
   return (
     <div style={{ padding: "20px" }}>
-      {/* 头部标题区：加上了上一条/下一条按钮 */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "20px",
-        }}
-      >
-        <Title level={3} style={{ margin: 0 }}>
-          推文标注审查 (ID: {currentData?.tweetId}){/* 数据状态锁的视觉展示 */}
-          {currentData?.status === "done" && (
-            <span
+      {/* 头部标题与操作区重构：大厂级中后台 Toolbar 设计 */}
+      <div style={{ marginBottom: "24px" }}>
+        {/* 第一行：信息展示层 */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            marginBottom: "16px",
+          }}
+        >
+          <div>
+            <Title
+              level={3}
               style={{
-                marginLeft: 16,
-                fontSize: 14,
-                color: "#52c41a",
-                background: "#f6ffed",
-                padding: "4px 8px",
-                border: "1px solid #b7eb8f",
-                borderRadius: 4,
+                margin: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: "12px",
               }}
             >
-              🔒 审核已通过 (不可篡改)
-            </span>
-          )}
-        </Title>
+              推文标注审查
+              {/* 把超长的 ID 变小，变灰，提升界面的呼吸感 */}
+              <span
+                style={{
+                  fontSize: "16px",
+                  color: "#888",
+                  fontWeight: "normal",
+                }}
+              >
+                ID: {currentData?.tweetId}
+              </span>
+              {/* 数据状态锁 */}
+              {currentData?.status === "done" && (
+                <span
+                  style={{
+                    fontSize: 13,
+                    color: "#52c41a",
+                    background: "#f6ffed",
+                    padding: "2px 8px",
+                    border: "1px solid #b7eb8f",
+                    borderRadius: 4,
+                  }}
+                >
+                  🔒 审核已通过 (不可篡改)
+                </span>
+              )}
+            </Title>
+          </div>
 
-        {/* 👇 右上角的身份展示与退出按钮 */}
-        <div>
-          <span style={{ marginRight: 16, color: "#888" }}>
-            当前登录: <b>{currentUser?.username}</b>(
-            {currentUser?.role === "reviewer" ? "🕵️‍♂️ 审核员" : "👨‍💻 标注员"})
-          </span>
-          <Button onClick={logout} danger type="dashed">
-            退出系统
-          </Button>
+          {/* 右上角的用户身份与退出 */}
+          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            <span style={{ color: "#666" }}>
+              当前登录: <b style={{ color: "#333" }}>{currentUser?.username}</b>
+              <Tag
+                color={currentUser?.role === "reviewer" ? "blue" : "default"}
+                style={{ marginLeft: 8 }}
+              >
+                {currentUser?.role === "reviewer" ? "🕵️‍♂️ 审核员" : "👨‍💻 标注员"}
+              </Tag>
+            </span>
+            <Button onClick={logout} danger type="text" size="small">
+              退出系统
+            </Button>
+          </div>
         </div>
 
-        <Space>
-          <Button
-            type="primary"
-            ghost
-            onClick={() => setIsAddDataModalVisible(true)}
-          >
-            + 新增单条数据
-          </Button>
-          {!isLockedForMe && (
-            <Popconfirm
-              title="⚠️ 警告：永久删除数据"
-              description="确定要从系统中彻底删除当前这条推文的所有数据吗？此操作无法撤销！"
-              disabled={isLockedForMe}
-              onConfirm={() => {
-                deleteCurrentData();
-                message.success("🗑️ 数据已彻底销毁！");
-              }}
-              okText="确定删除"
-              cancelText="取消"
-              okButtonProps={{ danger: true }} // 让确认按钮变成醒目的红色
+        {/* 第二行：高内聚的工具栏 (Toolbar) */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            background: "#f8f9fa", // 浅灰底色，划分出专门的操作区
+            padding: "12px 16px",
+            borderRadius: "8px",
+            border: "1px solid #f0f0f0",
+          }}
+        >
+          {/* 左侧功能组：数据管理（新增、导入导出折叠、删除） */}
+          <Space size="middle">
+            <Button
+              type="primary"
+              ghost
+              onClick={() => setIsAddDataModalVisible(true)}
             >
-              <Button
-                danger
-                icon={<DeleteOutlined />}
-                disabled={dataList.length === 0 || isLockedForMe} // 如果没数据了，按钮置灰
-              >
-                删除当前数据
-              </Button>
-            </Popconfirm>
-          )}
+              + 新增单条数据
+            </Button>
 
-          {/* 👇 只有审核员才能看到这个按钮块！ */}
-          {currentUser?.role === "reviewer" && currentData && (
-            <>
-              {currentData.status !== "done" ? (
+            {/* 核心降噪：把低频的导入导出塞进 Dropdown 下拉菜单里 */}
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: "import",
+                    label: (
+                      <Upload
+                        beforeUpload={handleImportJSON}
+                        showUploadList={false}
+                        accept=".json"
+                      >
+                        <div>
+                          <UploadOutlined /> 导入 JSON 文件
+                        </div>
+                      </Upload>
+                    ),
+                  },
+                  {
+                    key: "export_json",
+                    label: "导出当前 JSON",
+                    icon: <DownloadOutlined />,
+                    onClick: handleExportJSON,
+                  },
+                  {
+                    key: "export_yolo",
+                    label: "导出 YOLO 格式 (.txt)",
+                    icon: <DownloadOutlined />,
+                    onClick: handleExportYOLO,
+                    danger: true,
+                  },
+                ],
+              }}
+              trigger={["click"]}
+            >
+              <Button>数据导入/导出 ▾</Button>
+            </Dropdown>
+
+            {!isLockedForMe && (
+              <Popconfirm
+                title="⚠️ 永久删除数据"
+                description="确定要从系统中彻底删除当前这条推文的所有数据吗？此操作无法撤销！"
+                disabled={isLockedForMe || dataList.length === 0}
+                onConfirm={() => {
+                  deleteCurrentData();
+                  message.success("🗑️ 数据已彻底销毁！");
+                }}
+                okText="确定删除"
+                cancelText="取消"
+                okButtonProps={{ danger: true }}
+              >
+                <Button
+                  danger
+                  type="text"
+                  icon={<DeleteOutlined />}
+                  disabled={dataList.length === 0 || isLockedForMe}
+                >
+                  删除当前数据
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
+
+          {/* 中间功能组：翻页与审核（核心业务流转区） */}
+          <Space size="middle">
+            <Space.Compact>
+              <Button
+                disabled={currentIndex === 0}
+                onClick={() => fetchData(currentIndex - 1)}
+              >
+                上一条
+              </Button>
+              {/* 页码指示器 */}
+              <Button
+                type="dashed"
+                disabled
+                style={{ color: "#333", cursor: "default" }}
+              >
+                {dataList.length > 0
+                  ? `${currentIndex + 1} / ${dataList.length}`
+                  : "0 / 0"}
+              </Button>
+              <Button
+                type="primary"
+                disabled={currentIndex === dataList.length - 1}
+                onClick={() => fetchData(currentIndex + 1)}
+              >
+                下一条
+              </Button>
+            </Space.Compact>
+
+            {/* 审核员的专属按钮 */}
+            {currentUser?.role === "reviewer" &&
+              currentData &&
+              (currentData.status !== "done" ? (
                 <Button
                   type="primary"
                   style={{ background: "#52c41a" }}
@@ -832,113 +942,67 @@ const Workspace: React.FC = () => {
                 >
                   ↩️ 撤销审核 (打回修改)
                 </Button>
-              )}
-            </>
-          )}
-          <Button
-            disabled={currentIndex === 0}
-            onClick={() => {
-              fetchData(currentIndex - 1);
-            }}
-          >
-            上一条
-          </Button>
-          <Button
-            type="primary"
-            onClick={() => {
-              fetchData(currentIndex + 1);
-            }}
-            disabled={currentIndex === dataList.length - 1}
-          >
-            下一条
-          </Button>
-          {/* 增加包在 Upload 里的导入按钮 
-              accept=".json" 限制了只能选择 json 文件
-              beforeUpload 钩子就是我们拦截上传的关键
-          */}
-          <Upload
-            beforeUpload={handleImportJSON}
-            showUploadList={false}
-            accept=".json"
-          >
-            <Button icon={<UploadOutlined />}>导入 Json</Button>
-          </Upload>
-          <Button icon={<DownloadOutlined />} onClick={handleExportJSON}>
-            导出当前的 JSON 文件
-          </Button>
-          <Button
-            onClick={handleExportYOLO}
-            style={{ borderColor: "#f5222d", color: "#f5222d" }}
-          >
-            导出 YOLO 格式 (.txt)
-          </Button>
-          <Button
-            type="dashed"
-            style={{
-              borderColor: "#722ed1",
-              color: "#722ed1",
-              fontWeight: "bold",
-            }}
-            onClick={handleAIpredict}
-            loading={isPredicting} // 显示转圈圈动画
-            disabled={isPredicting || isLockedForMe} // 在一个实例的预测期间禁止再次进行点击
-          >
-            ✨ 呼叫 AI 智能预标注
-          </Button>
-          {/* 👇 这是新增的跨模块联动按钮 */}
-          <Button
-            type="primary"
-            style={{ backgroundColor: "#13c2c2", borderColor: "#13c2c2" }}
-            icon={<RobotOutlined />}
-            onClick={async () => {
-              if (!currentData || !activeId) {
-                if (!activeId)
-                  message.warning("请先在 AI 副驾中选择或创建一个对话");
-                return;
-              }
+              ))}
+          </Space>
 
-              // 1. 打开抽屉
-              setIsCopilotOpen(true);
+          {/* 右侧功能组：AI 赋能（强视觉焦点区域） */}
+          <Space>
+            <Button
+              type="primary"
+              style={{ background: "#722ed1", borderColor: "#722ed1" }}
+              onClick={handleAIpredict}
+              loading={isPredicting}
+              disabled={isPredicting || isLockedForMe}
+            >
+              ✨ 智能预标注
+            </Button>
 
-              // 2. 组装联动 Prompt，带着当前的图片和文本直接塞给 chatStore 的大脑！
-              const prompt = `我是一名多模态方面级情感分析的数据标注员，请帮我分析一下这条多模态推文数据中包括的方面词，以及方面词所对应的情感极性是什么（Positive | Negative | Neutral）？注意：方面词只存在在原文本中。\n原文本：${currentData.rawText}\n推文图片如上所示：`;
+            <Button
+              type="primary"
+              style={{ backgroundColor: "#13c2c2", borderColor: "#13c2c2" }}
+              icon={<RobotOutlined />}
+              onClick={async () => {
+                if (!currentData || !activeId) {
+                  if (!activeId)
+                    message.warning("请先在 AI 辅助中选择或创建一个对话");
+                  return;
+                }
 
-              const safeFetchUrl = currentData.imageUrl.replace(
-                "http://localhost:8000",
-                "",
-              );
-              // 👇 【核心修改】：不传 URL，先去本地后端把图拉取下来，转成 Base64 纯文本流！
-              try {
-                const response = await fetch(safeFetchUrl);
+                setIsCopilotOpen(true);
+                const prompt = `我是一名多模态方面级情感分析的数据标注员，请帮我分析一下这条多模态推文数据中包括的方面词，以及方面词所对应的情感极性是什么（Positive | Negative | Neutral）？注意：方面词只存在在原文本中。\n原文本：${currentData.rawText}\n推文图片如上所示：`;
+                const safeFetchUrl = currentData.imageUrl.replace(
+                  "http://localhost:8000",
+                  "",
+                );
 
-                const blob = await response.blob();
-                const reader = new FileReader();
+                try {
+                  const response = await fetch(safeFetchUrl);
+                  const blob = await response.blob();
+                  const reader = new FileReader();
 
-                reader.onloadend = () => {
-                  const base64data = reader.result as string; // 这就是转好的超长 Base64 字符串
-
-                  // 组装附件，data 此时变成了 "data:image/jpeg;base64,/9j/4AAQSkZJRg..." 这种格式
-                  const imageAttachment: Attachment = {
-                    id: Date.now().toString(),
-                    type: "image",
-                    name: "current_tweet_image.jpg",
-                    data: base64data,
+                  reader.onloadend = () => {
+                    const base64data = reader.result as string;
+                    const imageAttachment: Attachment = {
+                      id: Date.now().toString(),
+                      type: "image",
+                      name: "current_tweet_image.jpg",
+                      data: base64data,
+                    };
+                    sendMessage(activeId, prompt, [imageAttachment]);
+                    message.success(
+                      "已将当前多模态数据(Base64)传送至 AI 辅助！",
+                    );
                   };
-
-                  // 带着 Base64 发给大模型，它就不需要去下载了，直接解析字符串！
-                  sendMessage(activeId, prompt, [imageAttachment]);
-                  message.success("已将当前多模态数据(Base64)传送至 AI 副驾！");
-                };
-
-                reader.readAsDataURL(blob); // 触发转换
-              } catch (error) {
-                message.error("🚨 图片数据读取失败，无法传送！");
-              }
-            }}
-          >
-            向 AI 副驾提问当前数据
-          </Button>
-        </Space>
+                  reader.readAsDataURL(blob);
+                } catch (error) {
+                  message.error("🚨 图片数据读取失败，无法传送！");
+                }
+              }}
+            >
+              AI深度提问
+            </Button>
+          </Space>
+        </div>
       </div>
 
       {currentData ? (
@@ -1364,7 +1428,7 @@ const Workspace: React.FC = () => {
         type="primary"
         style={{ right: 24, bottom: 24, width: 60, height: 60 }}
         onClick={() => setIsCopilotOpen(true)}
-        tooltip="唤醒 AI 副驾"
+        tooltip="唤醒 AI 辅助"
       />
 
       {/* 🤖 AI 智能副驾侧边栏 (Drawer) */}
@@ -1373,7 +1437,7 @@ const Workspace: React.FC = () => {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <RobotOutlined style={{ color: "#1890ff", fontSize: 24 }} />
             <span style={{ fontSize: 18, fontWeight: "bold" }}>
-              AI 智能多模态副驾
+              AI 智能多模态辅助
             </span>
           </div>
         }

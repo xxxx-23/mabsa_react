@@ -1,4 +1,6 @@
 import {
+  Drawer,
+  FloatButton,
   Select,
   Modal,
   Input,
@@ -26,7 +28,14 @@ import {
   PlusOutlined,
   MinusCircleOutlined,
   DeleteOutlined,
+  RobotOutlined,
 } from "@ant-design/icons";
+
+import { ChatArea } from "../components/chat/ChatArea";
+import { Sidebar } from "../components/layout/Sidebar";
+import { useChatStore } from "../store/chatStore";
+import { useChatStream } from "../hooks/useChatStream";
+import { type Attachment } from "../types/chat";
 
 const { Title, Paragraph } = Typography;
 
@@ -62,6 +71,19 @@ const Workspace: React.FC = () => {
     endIndex: number;
   }
 
+  // 智能副驾抽屉开关
+  const [isCopilotOpen, setIsCopilotOpen] = useState(false);
+
+  // 从 chatStore 拿发送消息的方法，准备做跨模块联动
+  // const { sendMessage } = useChatStore();
+
+  // 1. 从 chatStore 拿到当前的活动对话 ID (activeId)
+  const { activeId } = useChatStore();
+  // 2. 从 useChatStream 拿到发送消息的方法
+  const { sendMessage } = useChatStream();
+  // 从 chatStore 拿出 init 方法
+  const { init: initChatStore } = useChatStore();
+
   // 核心锁：如果当前数据状态是 done，且当前登录人是 annotator (标注员)，那么界面就彻底上锁！
   const isLockedForMe =
     currentData?.status === "done" && currentUser?.role === "annotator";
@@ -69,6 +91,7 @@ const Workspace: React.FC = () => {
   // 组件刚挂载到屏幕上时，我们请求第 0 条数据
   useEffect(() => {
     loadAllData();
+    initChatStore();
   }, []); // 空数组代表只在初次渲染时执行一次
 
   // 定义悬浮菜单的状态
@@ -857,6 +880,59 @@ const Workspace: React.FC = () => {
           >
             ✨ 呼叫 AI 智能预标注
           </Button>
+          {/* 👇 这是新增的跨模块联动按钮 */}
+          <Button
+            type="primary"
+            style={{ backgroundColor: "#13c2c2", borderColor: "#13c2c2" }}
+            icon={<RobotOutlined />}
+            onClick={async () => {
+              if (!currentData || !activeId) {
+                if (!activeId)
+                  message.warning("请先在 AI 副驾中选择或创建一个对话");
+                return;
+              }
+
+              // 1. 打开抽屉
+              setIsCopilotOpen(true);
+
+              // 2. 组装联动 Prompt，带着当前的图片和文本直接塞给 chatStore 的大脑！
+              const prompt = `我是一名多模态方面级情感分析的数据标注员，请帮我分析一下这条多模态推文数据中包括的方面词，以及方面词所对应的情感极性是什么（Positive | Negative | Neutral）？注意：方面词只存在在原文本中。\n原文本：${currentData.rawText}\n推文图片如上所示：`;
+
+              const safeFetchUrl = currentData.imageUrl.replace(
+                "http://localhost:8000",
+                "",
+              );
+              // 👇 【核心修改】：不传 URL，先去本地后端把图拉取下来，转成 Base64 纯文本流！
+              try {
+                const response = await fetch(safeFetchUrl);
+
+                const blob = await response.blob();
+                const reader = new FileReader();
+
+                reader.onloadend = () => {
+                  const base64data = reader.result as string; // 这就是转好的超长 Base64 字符串
+
+                  // 组装附件，data 此时变成了 "data:image/jpeg;base64,/9j/4AAQSkZJRg..." 这种格式
+                  const imageAttachment: Attachment = {
+                    id: Date.now().toString(),
+                    type: "image",
+                    name: "current_tweet_image.jpg",
+                    data: base64data,
+                  };
+
+                  // 带着 Base64 发给大模型，它就不需要去下载了，直接解析字符串！
+                  sendMessage(activeId, prompt, [imageAttachment]);
+                  message.success("已将当前多模态数据(Base64)传送至 AI 副驾！");
+                };
+
+                reader.readAsDataURL(blob); // 触发转换
+              } catch (error) {
+                message.error("🚨 图片数据读取失败，无法传送！");
+              }
+            }}
+          >
+            向 AI 副驾提问当前数据
+          </Button>
         </Space>
       </div>
 
@@ -1277,6 +1353,42 @@ const Workspace: React.FC = () => {
           onPressEnter={handleModalOk}
         />
       </Modal>
+      {/* 🤖 悬浮在右下角的唤醒按钮 */}
+      <FloatButton
+        icon={<RobotOutlined />}
+        type="primary"
+        style={{ right: 24, bottom: 24, width: 60, height: 60 }}
+        onClick={() => setIsCopilotOpen(true)}
+        tooltip="唤醒 AI 副驾"
+      />
+
+      {/* 🤖 AI 智能副驾侧边栏 (Drawer) */}
+      <Drawer
+        title={
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <RobotOutlined style={{ color: "#1890ff", fontSize: 24 }} />
+            <span style={{ fontSize: 18, fontWeight: "bold" }}>
+              AI 智能多模态副驾
+            </span>
+          </div>
+        }
+        placement="right"
+        onClose={() => setIsCopilotOpen(false)}
+        open={isCopilotOpen}
+        width={800}
+        styles={{
+          body: {
+            padding: 0,
+          },
+        }} // 让 ChatArea 铺满
+        mask={false} // 【极其重要】：设为 false 代表打开抽屉时不会有黑色遮罩挡住左侧画板！
+      >
+        {/* ✅ 3.2 完美的左右分栏布局 */}
+        <div style={{ display: "flex", width: "100%", height: "100%" }}>
+          <Sidebar /> {/* 左侧：包含新建会话、历史列表和设置 */}
+          <ChatArea /> {/* 右侧：聊天主界面 */}
+        </div>
+      </Drawer>
     </div>
   );
 };

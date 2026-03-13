@@ -1,3 +1,10 @@
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+
+/* 💡 注意：我们故意不写 @import "tailwindcss/preflight.css"，
+   这就等同于以前的 preflight: false，完美保护你的 Ant Design 按钮！ */
+
+@import "tailwindcss/utilities.css" layer(utilities);
 body {
   margin: 0;
   padding: 0;
